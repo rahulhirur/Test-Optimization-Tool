@@ -1,0 +1,9 @@
+i go to the main screen.
+there is a login button on the top right, hit it.
+then a popup appears.
+put 'test_user' into the username box.
+put 'secure_password!@#' inside the pass field.
+then pres the sign in button.
+wait for it to load.
+check if the user profile icon shows up.
+if yes, make sure clicking the profile icon shows 'Logout' option.
