@@ -102,53 +102,94 @@ if yes, make sure clicking the profile icon shows 'Logout' option.""",
         key="download_sample"
     )
 
-    st.subheader("Input")
-    col1= st.columns(2)
-    uploaded_file = col1[0].file_uploader("Upload a QA test text file (.txt)", type=["txt", "md"])
-    file_content = ""
-    if uploaded_file is not None:
-        file_content = uploaded_file.getvalue().decode("utf-8")
-        st.info("File content loaded into text area.")
+    # Ensure there is a chat history container
+    if "messages" not in st.session_state:
+        st.session_state.messages = [{"role": "assistant", "content": "Hello! 👋 Paste an inconsistent QA test case below, or upload a `.txt` file using the sidebar, and I'll convert it to perfect Gherkin syntax."}]
 
-    user_input = col1[1].text_area(
-        "Or paste your inconsistent QA test text here:",
-        height="content", 
-        value=file_content, 
-        placeholder="e.g. I go to the home page, i see login button. hit it.."
-    )
 
-    if st.button("Optimize Test", type="primary", disabled=not bool(llm)):
-        if not user_input.strip():
-            st.error("Please enter some text to optimize.")
-            return
 
-        with st.spinner("Optimizing your test case..."):
-            try:
-                prompt = PromptTemplate(
-                    input_variables=["user_input", "allowed_verbs"],
-                    template=PROMPT_TEMPLATE
-                )
-                
-                chain = prompt | llm
-                
-                response = chain.invoke({
-                    "user_input": user_input,
-                    "allowed_verbs": ", ".join(ALLOWED_VERBS)
-                })
+    # Display chat history
+    for idx, message in enumerate(st.session_state.messages):
+        # Sanitize corrupt objects in case previous runs stored a ChatInputValue
+        if not isinstance(message["content"], str):
+            text_prop = getattr(message["content"], "text", "")
+            message["content"] = str(text_prop) if text_prop else "[Uploaded File Received]"
 
-                st.subheader("Result")
-                st.code(response.content, language="gherkin")
-
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+            if message["role"] == "assistant" and idx > 0:
+                raw_content = message["content"].replace("```gherkin\n", "").replace("\n```", "")
                 st.download_button(
                     label="📥 Download Output (.txt)",
-                    data=response.content,
-                    file_name="optimized_qa_test.txt",
+                    data=raw_content,
+                    file_name=f"optimized_qa_test_{idx}.txt",
                     mime="text/plain",
-                    type="secondary"
+                    type="secondary",
+                    key=f"download_{idx}"
                 )
 
-            except Exception as e:
-                st.error(f"An error occurred: {e}")
+    # Chat input (Accepts text and files)
+    prompt = st.chat_input("Paste text or drop a file...", accept_file="multiple", file_type=["txt", "md"])
+    if prompt:
+        user_text = ""
+        
+        # Determine if it's a string (old API) or object/dict (new API)
+        if isinstance(prompt, str):
+            user_text = prompt
+        else:
+            # It's an object or dict
+            text_part = getattr(prompt, "text", "") or (prompt.get("text", "") if isinstance(prompt, dict) else "")
+            
+            files_part = []
+            if hasattr(prompt, "files"):
+                files_part = prompt.files or []
+            elif isinstance(prompt, dict):
+                files_part = prompt.get("files", [])
+            else:
+                try:
+                    files_part = prompt["files"] or []
+                except (KeyError, TypeError, AttributeError):
+                    pass
+            
+            if text_part:
+                user_text += str(text_part) + "\n\n"
+                
+            for uploaded_file in files_part:
+                user_text += uploaded_file.getvalue().decode("utf-8") + "\n\n"
+
+        user_text = user_text.strip()
+            
+        if user_text:
+            # Must be str to prevent Streamlit rendering crashes
+            st.session_state.messages.append({"role": "user", "content": str(user_text)})
+            st.rerun()
+
+    # Process pending user message
+    if st.session_state.messages[-1]["role"] == "user":
+        if not llm:
+            with st.chat_message("assistant"):
+                st.error("Please configure your Cerebras API key in the sidebar first!")
+            return
+            
+        with st.chat_message("assistant"):
+            with st.spinner("Optimizing your test case..."):
+                try:
+                    chain_prompt = PromptTemplate(
+                        input_variables=["user_input", "allowed_verbs"],
+                        template=PROMPT_TEMPLATE
+                    )
+                    chain = chain_prompt | llm
+                    
+                    user_text = st.session_state.messages[-1]["content"]
+                    response = chain.invoke({
+                        "user_input": user_text,
+                        "allowed_verbs": ", ".join(ALLOWED_VERBS)
+                    })
+                    
+                    st.session_state.messages.append({"role": "assistant", "content": f"```gherkin\n{response.content}\n```"})
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"An error occurred: {e}")
 
 if __name__ == "__main__":
     main()
