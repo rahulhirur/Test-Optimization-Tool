@@ -17,12 +17,17 @@ ALLOWED_VERBS = [
 ]
 
 def get_llm(model_name="llama3.1-8b"):
-    api_key = os.environ.get("CEREBRAS_API_KEY")
+    if st.session_state.get("force_api_reset", False):
+        return None
+
+    api_key = st.session_state.get("user_api_key")
     if not api_key:
-        try:
-            api_key = st.secrets.get("CEREBRAS_API_KEY", "")
-        except Exception:
-            pass
+        api_key = os.environ.get("CEREBRAS_API_KEY")
+        if not api_key:
+            try:
+                api_key = st.secrets.get("CEREBRAS_API_KEY", "")
+            except Exception:
+                pass
 
     if not api_key:
         return None
@@ -61,20 +66,40 @@ def main():
     ]
     selected_model = st.sidebar.selectbox("Select LLM Model", AVAILABLE_MODELS, index=0)
 
+    # API Key Flush Logic
+    if "force_api_reset" not in st.session_state:
+        st.session_state.force_api_reset = False
+
+    if st.session_state.force_api_reset:
+        if "CEREBRAS_API_KEY" in os.environ:
+            del os.environ["CEREBRAS_API_KEY"]
+        if "user_api_key" in st.session_state:
+            del st.session_state.user_api_key
+
     # Check if API Key is already configured
-    api_key_configured = os.environ.get("CEREBRAS_API_KEY")
-    if not api_key_configured:
-        try:
-            api_key_configured = st.secrets.get("CEREBRAS_API_KEY", "")
-        except Exception:
-            pass
+    api_key_configured = None
+    if not st.session_state.force_api_reset:
+        if st.session_state.get("user_api_key"):
+            api_key_configured = st.session_state.user_api_key
+        else:
+            api_key_configured = os.environ.get("CEREBRAS_API_KEY")
+            if not api_key_configured:
+                try:
+                    api_key_configured = st.secrets.get("CEREBRAS_API_KEY", "")
+                except Exception:
+                    pass
 
     if api_key_configured:
         st.sidebar.success("✅ API Key configured securely")
+        if st.sidebar.button("🔄 Flush & Reset API Key"):
+            st.session_state.force_api_reset = True
+            st.rerun()
     else:
-        api_key_input = st.sidebar.text_input("Cerebras API Key", type="password", help="Enter your CEREBRAS_API_KEY if not set in the environment.")
+        api_key_input = st.sidebar.text_input("Cerebras API Key", type="password", help="Enter your CEREBRAS_API_KEY to start.")
         if api_key_input:
-            os.environ["CEREBRAS_API_KEY"] = api_key_input
+            st.session_state.user_api_key = api_key_input
+            st.session_state.force_api_reset = False
+            st.rerun()
 
     llm = get_llm(selected_model)
 
